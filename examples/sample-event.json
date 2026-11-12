@@ -1,0 +1,16 @@
+{
+  "customer_id": "rd-dunder-mifflin",
+  "event_type": "warehouse_compute",
+  "properties": {
+    "cloud_provider": "aws",
+    "compute_seconds": "900",
+    "interval_end": "2026-11-08T01:00:00Z",
+    "interval_start": "2026-11-08T00:00:00Z",
+    "region": "us-east-1",
+    "schema_version": "1",
+    "warehouse_id": "wh_dm_aws_01",
+    "warehouse_size": "small"
+  },
+  "timestamp": "2026-11-08T00:00:00Z",
+  "transaction_id": "warehouse_compute:wh_dm_aws_01:2026-11-08T00:00:00Z"
+}

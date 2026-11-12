@@ -1,0 +1,51 @@
+Raindrop Part 1 source package local verification
+Checked at: 2026-11-12T10:39:51+00:00
+Python: 3.12.14 (main, Aug 25 2026, 13:50:33) [Clang 22.1.3 ]
+Source, tests and example configuration match the assessment originals.
+Fresh temporary copy; no credentials supplied. No live ingestion performed.
+API outcomes in the test suite are mocked.
+
+$ python3 src/raindrop.py generate --config config.example.json --out scratch/dataset.json
+INFO Generated 360 events; sha256=1f453a4dacf58155a47d3d04a1f66e985fa5dab94883f72bfd57b0c229d7a6ae
+
+$ python3 src/raindrop.py validate --dataset scratch/dataset.json
+INFO Validated 360 deterministic events locally
+
+$ python3 src/raindrop.py ingest --dataset scratch/dataset.json --state scratch/ingestion.sqlite3 --report scratch/dry-run.json
+INFO DRY RUN: 360 events; 4 batches; no network requests
+
+$ python3 src/reconcile.py --dataset scratch/dataset.json --out scratch/expected-totals.json
+Wrote local expected results
+
+$ python3 -m unittest discover -s tests -v
+test_360_unique_deterministic_events (test_billing.BillingTests.test_360_unique_deterministic_events) ... ok
+test_all_customer_usage_observations_checked_without_invoice (test_billing.BillingTests.test_all_customer_usage_observations_checked_without_invoice) ... ok
+test_batch_limits_and_restart_skip (test_billing.BillingTests.test_batch_limits_and_restart_skip) ... ok
+test_changed_measurement_conflicts (test_billing.BillingTests.test_changed_measurement_conflicts) ... ok
+test_dry_run_never_calls_transport (test_billing.BillingTests.test_dry_run_never_calls_transport) ... ok
+test_duplicate_replay_mock (test_billing.BillingTests.test_duplicate_replay_mock) ... ok
+test_exhausted_retries_preserve_pending_mock (test_billing.BillingTests.test_exhausted_retries_preserve_pending_mock) ... ok
+test_incorrect_attribution_and_malformed_data_rejected (test_billing.BillingTests.test_incorrect_attribution_and_malformed_data_rejected) ... ok
+test_independent_totals_and_no_per_event_rounding (test_billing.BillingTests.test_independent_totals_and_no_per_event_rounding) ... ok
+test_malformed_token_cannot_leak_into_exception (test_billing.BillingTests.test_malformed_token_cannot_leak_into_exception) ... ok
+test_metric_order_gate (test_billing.BillingTests.test_metric_order_gate) ... ok
+test_partial_ambiguous_failure_retries_unchanged_mock (test_billing.BillingTests.test_partial_ambiguous_failure_retries_unchanged_mock) ... ok
+test_period_boundaries (test_billing.BillingTests.test_period_boundaries) ... ok
+test_permanent_400_stops_and_stays_held_mock (test_billing.BillingTests.test_permanent_400_stops_and_stays_held_mock) ... ok
+test_product_conversion_gate (test_billing.BillingTests.test_product_conversion_gate) ... ok
+test_renaming_dataset_does_not_create_new_usage (test_billing.BillingTests.test_renaming_dataset_does_not_create_new_usage) ... ok
+test_retryable_429_and_503_mock (test_billing.BillingTests.test_retryable_429_and_503_mock) ... ok
+test_seconds_observations_are_converted_once (test_billing.BillingTests.test_seconds_observations_are_converted_once) ... ok
+test_stale_and_unfinished_usage_blocked (test_billing.BillingTests.test_stale_and_unfinished_usage_blocked) ... ok
+test_synthetic_invoice_reconciliation (test_billing.BillingTests.test_synthetic_invoice_reconciliation) ... ok
+test_warehouse_identity_and_metadata (test_billing.BillingTests.test_warehouse_identity_and_metadata) ... ok
+test_whole_second_measurements_and_twenty_minute_runs (test_billing.BillingTests.test_whole_second_measurements_and_twenty_minute_runs) ... ok
+
+----------------------------------------------------------------------
+Ran 22 tests in 17.492s
+
+OK
+
+Summary: 360 unique events; 4 dry-run batches; all 6 expected usage groups matched.
+All 22 local tests passed. No live HTTP requests or account changes were made.
+The fixed example keeps both live-send confirmation flags false.

@@ -1,0 +1,62 @@
+{
+  "environment": "assessment-sandbox",
+  "dataset_id": "raindrop-20261108-seconds-v1",
+  "start": "2026-11-08T00:00:00Z",
+  "period_start": "2026-11-01T00:00:00Z",
+  "period_end": "2026-12-01T00:00:00Z",
+  "metrics_confirmed": false,
+  "customers": [
+    {
+      "name": "Dunder Mifflin",
+      "alias": "rd-dunder-mifflin",
+      "seconds_per_window": 900,
+      "warehouses": {
+        "aws": {
+          "id": "wh_dm_aws_01",
+          "region": "us-east-1",
+          "size": "small"
+        },
+        "gcp": {
+          "id": "wh_dm_gcp_01",
+          "region": "us-central1",
+          "size": "small"
+        }
+      }
+    },
+    {
+      "name": "Initech",
+      "alias": "rd-initech",
+      "seconds_per_window": 1800,
+      "warehouses": {
+        "aws": {
+          "id": "wh_initech_aws_01",
+          "region": "us-east-1",
+          "size": "small"
+        },
+        "gcp": {
+          "id": "wh_initech_gcp_01",
+          "region": "us-central1",
+          "size": "small"
+        }
+      }
+    },
+    {
+      "name": "Hooli",
+      "alias": "rd-hooli",
+      "seconds_per_window": 3600,
+      "warehouses": {
+        "aws": {
+          "id": "wh_hooli_aws_01",
+          "region": "us-east-1",
+          "size": "small"
+        },
+        "gcp": {
+          "id": "wh_hooli_gcp_01",
+          "region": "us-central1",
+          "size": "small"
+        }
+      }
+    }
+  ],
+  "products_confirmed": false
+}
