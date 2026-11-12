@@ -1,1 +1,26 @@
+# Local configuration, credentials and run state
+/private/
+/scratch/
+/.env
+/.env.*
+/config.local.json
+*.sqlite3*
+*.db
+*.db-*
+*.lock
+*.pem
+*.key
 
+# Python and editor output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Local packaging and macOS metadata
+*.zip
+.DS_Store
+__MACOSX/
