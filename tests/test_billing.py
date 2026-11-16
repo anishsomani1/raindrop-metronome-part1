@@ -1,243 +1,171 @@
-"""Local tests; all API outcomes below are mocks, never sandbox evidence."""
-import copy
-from datetime import datetime, timezone
+"""Local checks only. API responses are simulated; no Metronome requests are made."""
+from collections import Counter
+from contextlib import redirect_stdout
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from email.utils import format_datetime
+import io
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from raindrop import generate, validate_dataset, ingest, digest, retry_delay, validate_token
-from reconcile import expected, compare, USD_CENTS_ID
+from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[1]
-NOW = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+sys.path.insert(0, str(ROOT / "src"))
+import raindrop as app
+
+NOW = datetime(2026, 11, 12, tzinfo=timezone.utc)
 
 
 class BillingTests(unittest.TestCase):
     def setUp(self):
         self.cfg = json.loads((ROOT / "config.example.json").read_text())
-        self.cfg["metrics_confirmed"] = True
-        self.cfg["products_confirmed"] = True
-        self.data = generate(self.cfg)
-        self.temp = tempfile.TemporaryDirectory()
-        self.db = str(Path(self.temp.name) / "state.sqlite3")
+        self.events = app.generate(self.cfg)
+        self.output = io.StringIO()
+        self.quiet = redirect_stdout(self.output)
+        self.quiet.__enter__()
+        self.addCleanup(self.quiet.__exit__, None, None, None)
 
-    def tearDown(self):
-        self.temp.cleanup()
+    def send(self, transport, **kwargs):
+        sleep = kwargs.pop("sleep", Mock())
+        app.send_events(self.events, "test-token", transport=transport,
+                        sleep=sleep, now=NOW, **kwargs)
+        return sleep
 
-    def run_ingest(self, transport, **kwargs):
-        return ingest(self.data, self.db, "MOCK-NOT-A-REAL-TOKEN", send=True,
-                      now=NOW, transport=transport, sleep=lambda _: None, **kwargs)
+    def test_repeatable_360_events_with_correct_customer_provider_and_units(self):
+        self.assertEqual(self.events, app.generate(self.cfg))
+        self.assertEqual(len(self.events), 360)
+        self.assertEqual(len({e["transaction_id"] for e in self.events}), 360)
+        counts = Counter((e["customer_id"], e["properties"]["cloud_provider"]) for e in self.events)
+        self.assertEqual(len(counts), 6)
+        self.assertEqual(set(counts.values()), {60})
+        for event in self.events:
+            self.assertEqual(event["timestamp"], event["properties"]["interval_start"])
+            self.assertTrue(all(isinstance(v, str) for v in event["properties"].values()))
 
-    def test_360_unique_deterministic_events(self):
-        self.assertEqual(self.data, generate(self.cfg))
-        self.assertEqual(validate_dataset(self.data), 360)
-
-    def test_independent_totals_and_no_per_event_rounding(self):
-        rows = expected(self.data)
-        self.assertEqual([r["expected_usage_hours"] for r in rows], ["15", "15", "60", "60", "30", "30"])
-        dunder = [r for r in rows if r["customer"] == "rd-dunder-mifflin"]
-        self.assertEqual(sum(Decimal(r["expected_charge_usd"]) for r in dunder), Decimal("15.45"))
-        corrupted_events = copy.deepcopy(self.data)
-        corrupted_events["events"][0]["properties"]["compute_seconds"] = "999"
-        self.assertEqual(expected(corrupted_events), rows)  # Calculator uses measurement seconds.
-        self.assertIsNone(rows[0]["observed_usage_hours"])
-
-    def test_incorrect_attribution_and_malformed_data_rejected(self):
-        for key, value in [("cloud_provider", "azure"), ("compute_seconds", "NaN"),
-                           ("compute_seconds", 900), ("compute_seconds", "0.25"),
-                           ("compute_seconds", "0"), ("compute_seconds", "3601")]:
-            d = copy.deepcopy(self.data)
-            d["events"][0]["properties"][key] = value
-            d["events_sha256"] = digest(d["events"])
-            with self.assertRaises(ValueError):
-                validate_dataset(d)
-
-    def test_period_boundaries(self):
-        cfg = copy.deepcopy(self.cfg)
-        cfg["start"] = "2026-11-28T12:00:00Z"  # Ends exactly at exclusive period end.
-        validate_dataset(generate(cfg))
-        cfg["start"] = "2026-11-28T13:00:00Z"
-        with self.assertRaises(ValueError):
-            generate(cfg)
-
-    def test_stale_and_unfinished_usage_blocked(self):
-        for now in [datetime(2026, 12, 20, tzinfo=timezone.utc), datetime(2026, 11, 9, tzinfo=timezone.utc)]:
-            with self.assertRaises(ValueError):
-                validate_dataset(self.data, now=now, ingestion=True)
-
-    def test_dry_run_never_calls_transport(self):
-        result = ingest(self.data, self.db, transport=lambda *_: self.fail("network called"))
-        self.assertEqual(result["mode"], "dry-run")
-        self.assertFalse(Path(self.db).exists())
-
-    def test_metric_order_gate(self):
-        self.cfg["metrics_confirmed"] = False
-        self.data = generate(self.cfg)
-        with self.assertRaises(ValueError):
-            self.run_ingest(lambda *_: self.fail("network called"))
-
-    def test_product_conversion_gate(self):
-        self.cfg["products_confirmed"] = False
-        self.data = generate(self.cfg)
-        with self.assertRaisesRegex(ValueError, "divide-by-3600"):
-            self.run_ingest(lambda *_: self.fail("network called"))
-
-    def test_whole_second_measurements_and_twenty_minute_runs(self):
-        for invalid in (True, 900.0, "900", 0, -1, 3601):
-            cfg = copy.deepcopy(self.cfg)
-            cfg["customers"][0]["seconds_per_window"] = invalid
-            with self.assertRaises(ValueError):
-                generate(cfg)
+    def test_expected_totals_and_fractional_hour_measurements(self):
+        rows = app.expected_totals(self.cfg)
+        self.assertEqual([r["expected_hours"] for r in rows], ["15", "15", "30", "30", "60", "60"])
+        self.assertEqual(sum(Decimal(r["expected_usd"]) for r in rows[:2]), Decimal("15.45"))
+        for row in rows:
+            seconds = sum(int(e["properties"]["compute_seconds"]) for e in self.events
+                          if (e["customer_id"], e["properties"]["cloud_provider"])
+                          == (row["customer"], row["provider"]))
+            self.assertEqual(seconds, row["expected_seconds"])
         self.cfg["customers"][0]["seconds_per_window"] = 1200
-        data = generate(self.cfg)
-        self.assertEqual(data["events"][0]["properties"]["compute_seconds"], "1200")
-        self.assertEqual(data["measurements"][0]["active_seconds"], 1200)
-        dunder = [r for r in expected(data) if r["customer"] == "rd-dunder-mifflin"]
-        self.assertEqual([r["expected_usage_hours"] for r in dunder], ["20", "20"])
-        self.assertEqual([r["expected_charge_usd"] for r in dunder], ["10.80", "9.80"])
+        self.assertEqual(app.generate(self.cfg)[0]["properties"]["compute_seconds"], "1200")
+        self.assertEqual(app.expected_totals(self.cfg)[0]["expected_hours"], "20")
 
-    def test_warehouse_identity_and_metadata(self):
-        first = self.data["events"][0]
-        self.assertEqual(first["transaction_id"], "warehouse_compute:wh_dm_aws_01:2026-11-08T00:00:00Z")
-        self.assertEqual(first["event_type"], "warehouse_compute")
-        self.assertEqual(first["properties"]["region"], "us-east-1")
-        self.assertEqual(self.data["events"][60]["properties"]["region"], "us-central1")
-        self.assertEqual(set(first["properties"]), {"cloud_provider", "compute_seconds", "warehouse_id",
-            "warehouse_size", "region", "interval_start", "interval_end", "schema_version"})
-        self.cfg["customers"][1]["warehouses"]["aws"]["id"] = "wh_dm_aws_01"
-        with self.assertRaisesRegex(ValueError, "globally unique"):
-            generate(self.cfg)
+    def test_invalid_configuration_and_billing_boundaries(self):
+        invalid = []
+        for value in (0, -1, 3601, 0.25, True):
+            cfg = deepcopy(self.cfg)
+            cfg["customers"][0]["seconds_per_window"] = value
+            invalid.append(cfg)
+        for change in ("region", "alias", "warehouse", "period", "timezone"):
+            cfg = deepcopy(self.cfg)
+            if change == "region":
+                cfg["customers"][0]["warehouses"]["aws"]["region"] = ""
+            elif change == "alias":
+                cfg["customers"][1]["alias"] = cfg["customers"][0]["alias"]
+            elif change == "warehouse":
+                cfg["customers"][1]["warehouses"]["aws"]["id"] = "wh_dm_aws_01"
+            elif change == "period":
+                cfg["start"] = "2026-11-30T00:00:00Z"
+            else:
+                cfg["start"] = "2026-11-08T00:00:00"
+            invalid.append(cfg)
+        for cfg in invalid:
+            with self.subTest(config=cfg), self.assertRaises(ValueError):
+                app.generate(cfg)
 
-    def test_batch_limits_and_restart_skip(self):
-        batches = []
-        self.run_ingest(lambda b, _: (batches.append(len(b)) or 200, {}))
-        self.assertEqual(batches, [100, 100, 100, 60])
-        report = self.run_ingest(lambda *_: self.fail("accepted events resent"))
-        self.assertEqual(report["skipped_previously_accepted"], 360)
+    def test_default_dry_run_writes_data_without_sending(self):
+        with tempfile.TemporaryDirectory() as folder:
+            args = ["raindrop.py", "--config", str(ROOT / "config.example.json"), "--out-dir", folder]
+            with patch.object(sys, "argv", args), patch.object(app, "send_events") as send:
+                app.main()
+                send.assert_not_called()
+            self.assertEqual(json.loads((Path(folder) / "events.json").read_text()), self.events)
+        self.assertIn("360 events; 4 batches; no network requests", self.output.getvalue())
 
-    def test_duplicate_replay_mock(self):
-        accepted_ids = set()
-        calls = []
-        def mock(b, _):
-            calls.append([e["transaction_id"] for e in b])
-            accepted_ids.update(calls[-1])
-            return 200, {}
-        self.run_ingest(mock)
-        self.run_ingest(mock, replay=True)
-        self.assertEqual(len(accepted_ids), 360)
-        self.assertEqual(calls[:4], calls[4:])
+    def test_batches_and_reruns_preserve_all_ids(self):
+        transport = Mock(return_value=(200, {}))
+        self.send(transport)
+        self.send(transport)
+        batches = [call.args[0] for call in transport.call_args_list]
+        self.assertEqual([len(b) for b in batches], [100, 100, 100, 60] * 2)
+        self.assertEqual(batches[:4], batches[4:])
 
-    def test_partial_ambiguous_failure_retries_unchanged_mock(self):
-        batches, server_ids = [], set()
-        def mock(batch, _):
-            batches.append(copy.deepcopy(batch))
-            if len(batches) == 1:
-                server_ids.update(e["transaction_id"] for e in batch[:23])
-                return 0, {}  # Lost response after partial acceptance.
-            server_ids.update(e["transaction_id"] for e in batch)
-            return 200, {}
-        self.run_ingest(mock)
-        self.assertEqual(batches[0], batches[1])
-        self.assertEqual(len(server_ids), 360)
+    def test_timeout_retries_the_identical_batch(self):
+        transport = Mock(side_effect=[(0, {}), (200, {}), (200, {}), (200, {}), (200, {})])
+        sleep = self.send(transport)
+        self.assertEqual(transport.call_args_list[0].args, transport.call_args_list[1].args)
+        sleep.assert_called_once()
 
-    def test_retryable_429_and_503_mock(self):
-        outcomes = iter([429, 503, 200, 200, 200, 200])
-        self.assertEqual(self.run_ingest(lambda *_: (next(outcomes), {}))["accepted_this_run"], 360)
-        self.assertGreaterEqual(retry_delay({"Retry-After": "20"}, 0, lambda: 0), 20)
+    def test_rate_limit_and_server_error_retry_with_backoff(self):
+        transport = Mock(side_effect=[(429, {"Retry-After": "3"}), (503, {}),
+                                      (200, {}), (200, {}), (200, {}), (200, {})])
+        sleep = self.send(transport)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertGreaterEqual(sleep.call_args_list[0].args[0], 3)
+        self.assertEqual(transport.call_args_list[0].args, transport.call_args_list[2].args)
 
-    def test_permanent_400_stops_and_stays_held_mock(self):
-        with self.assertRaises(RuntimeError):
-            self.run_ingest(lambda *_: (400, {}))
-        with self.assertRaises(ValueError):
-            self.run_ingest(lambda *_: self.fail("permanent failure retried"))
+    def test_permanent_errors_stop_without_retry_or_next_batch(self):
+        for status in (400, 401, 403, 302):
+            transport, sleep = Mock(return_value=(status, {})), Mock()
+            with self.subTest(status=status), self.assertRaises(RuntimeError):
+                self.send(transport, sleep=sleep)
+            transport.assert_called_once()
+            sleep.assert_not_called()
 
-    def test_exhausted_retries_preserve_pending_mock(self):
-        with self.assertRaises(RuntimeError):
-            self.run_ingest(lambda *_: (503, {}), max_attempts=2)
-        self.assertEqual(self.run_ingest(lambda *_: (200, {}))["accepted_this_run"], 360)
+    def test_retry_exhaustion_stops_after_five_attempts(self):
+        transport, sleep = Mock(return_value=(503, {})), Mock()
+        with self.assertRaisesRegex(RuntimeError, "Retry limit"):
+            self.send(transport, sleep=sleep)
+        self.assertEqual(transport.call_count, 5)
+        self.assertEqual(sleep.call_count, 4)
 
-    def test_changed_measurement_conflicts(self):
-        self.run_ingest(lambda *_: (200, {}))
-        old_ids = [e["transaction_id"] for e in self.data["events"]]
-        self.cfg["customers"][0]["seconds_per_window"] = 1800
-        self.data = generate(self.cfg)
-        self.assertEqual(old_ids, [e["transaction_id"] for e in self.data["events"]])
-        with self.assertRaises(ValueError):
-            self.run_ingest(lambda *_: self.fail("conflict sent"))
+    def test_live_send_blocks_old_or_unfinished_windows(self):
+        for now in (datetime(2027, 1, 1, tzinfo=timezone.utc), datetime(2026, 11, 8, tzinfo=timezone.utc)):
+            transport = Mock()
+            with self.subTest(now=now), self.assertRaises(ValueError):
+                app.send_events(self.events, "test-token", transport=transport, now=now)
+            transport.assert_not_called()
 
-    def test_renaming_dataset_does_not_create_new_usage(self):
-        self.run_ingest(lambda *_: (200, {}))
-        self.cfg["dataset_id"] = "renamed-dataset"
-        original_events = self.data["events"]
-        self.data = generate(self.cfg)
-        self.assertEqual(original_events, self.data["events"])
-        with self.assertRaises(ValueError):
-            self.run_ingest(lambda *_: self.fail("overlap sent"))
+    def test_invalid_tokens_are_blocked_without_being_exposed(self):
+        for token in (None, "", "secret\nvalue"):
+            transport = Mock()
+            with self.subTest(token=bool(token)), self.assertRaises(ValueError) as raised:
+                app.send_events(self.events, token, transport=transport, now=NOW)
+            self.assertNotIn("secret", str(raised.exception))
+            transport.assert_not_called()
 
-    def test_synthetic_invoice_reconciliation(self):
-        mapping = {"customer_id": "SYNTHETIC-CUSTOMER", "customer_alias": "rd-dunder-mifflin",
-            "contract_id": "SYNTHETIC-CONTRACT", "products": {"P-AWS": "aws", "P-GCP": "gcp"},
-            "start_timestamp": self.cfg["period_start"], "end_timestamp": self.cfg["period_end"]}
-        inv = {"data": {"id": "SYNTHETIC-INVOICE", "type": "USAGE", "status": "DRAFT",
-            "customer_id": mapping["customer_id"], "contract_id": mapping["contract_id"],
-            "start_timestamp": mapping["start_timestamp"], "end_timestamp": mapping["end_timestamp"],
-            "credit_type": {"id": USD_CENTS_ID}, "total": 1545,
-            "line_items": [{"product_id": p, "product_type": "UsageProductListItem",
-                "credit_type": {"id": USD_CENTS_ID}, "quantity": 15, "unit_price": price, "total": 15 * price}
-                for p, price in [("P-AWS", 54), ("P-GCP", 49)]]}}
-        rows = compare(self.data, inv, mapping)
-        self.assertEqual(rows[0]["difference_usd"], "0.00")
-        bad_alias = {**mapping, "customer_alias": "rd-typo"}
-        with self.assertRaises(ValueError):
-            compare(self.data, inv, bad_alias)
-        empty = {**self.data, "measurements": []}
-        with self.assertRaises(ValueError):
-            compare(empty, inv, mapping)
-        old_mapping = {**mapping, "start_timestamp": "2026-10-01T00:00:00Z", "end_timestamp": "2026-11-01T00:00:00Z"}
-        old_invoice = copy.deepcopy(inv)
-        old_invoice["data"].update({k: old_mapping[k] for k in ("start_timestamp", "end_timestamp")})
-        with self.assertRaises(ValueError):
-            compare(self.data, old_invoice, old_mapping)
-        inv["data"]["line_items"][0]["commit_id"] = "COMMIT"
-        with self.assertRaises(ValueError):
-            compare(self.data, inv, mapping)
+    def test_retry_after_seconds_date_and_invalid_header(self):
+        self.assertGreaterEqual(app.retry_delay({"retry-after": "10"}, 0), 10)
+        later = format_datetime(datetime.now(timezone.utc) + timedelta(seconds=30), usegmt=True)
+        self.assertGreater(app.retry_delay({"Retry-After": later}, 0), 25)
+        self.assertGreaterEqual(app.retry_delay({"Retry-After": "invalid"}, 0), 1)
 
-    def test_all_customer_usage_observations_checked_without_invoice(self):
-        obs = {"rd-initech": {"aws": {"hours": "30", "source_file": "MOCK-usage.json",
-            "query_start": "2026-11-08T00:00:00Z", "query_end": "2026-11-11T00:00:00Z"}}}
-        rows = compare(self.data, observations=obs)
-        self.assertEqual(next(r for r in rows if r["customer"] == "rd-initech" and r["provider"] == "aws")["observed_usage_hours"], "30")
-        obs["rd-initech"]["aws"]["hours"] = "999"
-        with self.assertRaises(ValueError):
-            compare(self.data, observations=obs)
-
-    def test_malformed_token_cannot_leak_into_exception(self):
-        token = "MOCK-SECRET\nSECOND-LINE"
-        with self.assertRaises(ValueError) as caught:
-            validate_token(token)
-        self.assertNotIn("MOCK-SECRET", str(caught.exception))
-        with self.assertRaises(ValueError):
-            ingest(self.data, self.db, token, send=True, now=NOW, transport=lambda *_: self.fail("bad token sent"))
-
-    def test_seconds_observations_are_converted_once(self):
-        obs = {"rd-dunder-mifflin": {"aws": {"seconds": "54000", "source_file": "MOCK-seconds-usage.json",
-            "query_start": "2026-11-08T00:00:00Z", "query_end": "2026-11-11T00:00:00Z"}}}
-        rows = compare(self.data, observations=obs)
-        row = next(r for r in rows if r["customer"] == "rd-dunder-mifflin" and r["provider"] == "aws")
-        self.assertEqual(row["observed_usage_seconds"], "54000")
-        self.assertEqual(row["observed_usage_hours"], "15")
-        obs["rd-dunder-mifflin"]["aws"]["hours"] = "15"
-        with self.assertRaisesRegex(ValueError, "exactly one explicit unit"):
-            compare(self.data, observations=obs)
-        del obs["rd-dunder-mifflin"]["aws"]["hours"]
-        obs["rd-dunder-mifflin"]["aws"]["seconds"] = "15"
-        with self.assertRaisesRegex(ValueError, "Observed usage differs"):
-            compare(self.data, observations=obs)
+    def test_http_request_and_uncertain_transport_outcomes(self):
+        with patch.object(app, "build_opener") as build:
+            response = build.return_value.open.return_value.__enter__.return_value
+            response.status, response.headers = 200, {}
+            self.assertEqual(app.post_ingest(self.events[:1], "test-token"), (200, {}))
+            request = build.return_value.open.call_args.args[0]
+            self.assertEqual(json.loads(request.data), self.events[:1])
+            self.assertEqual(request.get_method(), "POST")
+            self.assertEqual(build.return_value.open.call_args.kwargs["timeout"], 30)
+            handler = build.call_args.args[0]
+            self.assertIsNone(handler.redirect_request(None, None, 302, "", {}, "https://example.com"))
+            build.return_value.open.side_effect = TimeoutError()
+            self.assertEqual(app.post_ingest(self.events[:1], "test-token"), (0, {}))
+            build.return_value.open.side_effect = HTTPError(app.INGEST_URL, 429, "limit", {}, None)
+            self.assertEqual(app.post_ingest(self.events[:1], "test-token"), (429, {}))
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

@@ -1,3 +1,2 @@
-# Python 3.11+ on macOS or Linux.
-# Runtime and tests use only the Python standard library.
+# Python 3.11 or later. Runtime and tests use only the standard library.
 # No pip packages are required.

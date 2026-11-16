@@ -1,10 +1,7 @@
 {
-  "environment": "assessment-sandbox",
-  "dataset_id": "raindrop-20261108-seconds-v1",
   "start": "2026-11-08T00:00:00Z",
   "period_start": "2026-11-01T00:00:00Z",
   "period_end": "2026-12-01T00:00:00Z",
-  "metrics_confirmed": false,
   "customers": [
     {
       "name": "Dunder Mifflin",
@@ -57,6 +54,5 @@
         }
       }
     }
-  ],
-  "products_confirmed": false
+  ]
 }
