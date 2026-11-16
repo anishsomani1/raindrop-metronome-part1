@@ -1,4 +1,4 @@
-Commented simplified revision: local checks, 16 November 2026. No account requests.
+Local checks, 16 November 2026. No requests to Metronome.
 
 $ python3 src/raindrop.py
 DRY RUN: 360 events; 4 batches; no network requests
@@ -32,11 +32,8 @@ test_timeout_retries_the_identical_batch (test_billing.BillingTests.test_timeout
 Simulate a lost response, then success, and compare the two requests. ... ok
 
 ----------------------------------------------------------------------
-Ran 13 tests in 2.730s
+Ran 13 tests in 2.761s
 
 OK
 
-All 360 event objects and six expected totals are unchanged.
-Executable code structure matches the pre-comment version.
-The original live implementation and evidence are preserved separately.
-This revision has not been sent to Metronome.
+The six expected totals match examples/expected-totals.json, and the first event matches examples/sample-event.json. Nothing was sent to Metronome.
