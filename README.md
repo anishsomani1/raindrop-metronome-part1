@@ -2,8 +2,6 @@
 
 One Python script generates 360 sample warehouse-usage events, calculates expected totals and optionally sends the events to Metronome. It uses Python 3.11 or later and the standard library; no packages need installing.
 
-This is the simplified submission version. Its 360 events were compared with the preserved original implementation and match exactly, including IDs, timestamps and properties. This revision was validated locally and has not been sent to Metronome. The invoice and account screenshots in the document come from the original live run.
-
 ## Start here
 
 From the repository folder, run:
@@ -47,9 +45,9 @@ For Dunder's AWS warehouse: `60 × 900 ÷ 3,600 = 15 hours`, then `15 × $0.54 =
 
 Requests use `POST /v1/ingest`, a 30-second timeout and at most five attempts per batch per run. Network errors, HTTP 429 and 5xx responses retry with increasing delays and jitter. A valid `Retry-After` header is respected. Other HTTP failures stop immediately. Requests do not follow redirects.
 
-There is no local delivery database. A rerun regenerates and resends all 360 events. Within Metronome's documented 34-day duplicate-detection window after acceptance, unchanged transaction IDs let Metronome ignore repeated events. Do not change IDs, timestamps or quantities to retry old usage. A changed amount under the same ID is not an update to accepted usage.
+A rerun resends all 360 events with the same transaction IDs; there is no local delivery database. Metronome ignores repeated IDs for 34 days after acceptance. If a run stops partway, check the reported batch and account usage, then rerun the unchanged configuration once the issue is resolved. Keep IDs, timestamps and amounts unchanged; reusing an ID does not update accepted usage.
 
-If a run stops, some events may already have arrived. Inspect the reported batch and account usage before rerunning the unchanged configuration. Do not assume duplicate protection lasts indefinitely. Live mode rejects incomplete windows and events older than the 34-day ingestion window; the ingestion and duplicate-detection windows are separate rules.
+Live mode rejects unfinished hourly windows and event timestamps more than 34 days old. This event-age check is separate from duplicate detection, which runs from acceptance.
 
 HTTP 200 confirms acceptance, not correct billing. Check customer attribution, provider usage and invoice line items separately.
 
@@ -58,7 +56,7 @@ HTTP 200 confirms acceptance, not correct billing. Check customer attribution, p
 Reviewing the completed assessment only requires the dry run and tests. For a separate live exercise:
 
 - Confirm the customer aliases, metrics and seconds-to-hours product conversions in the intended account. Configure the rates and contract needed for invoice validation.
-- Save any local changes in the ignored `config.local.json`; the script does not inspect Metronome configuration automatically.
+- Copy `config.example.json` to `config.local.json` (ignored by Git), then edit the copy. The script does not inspect Metronome configuration automatically.
 - Load `METRONOME_BEARER_TOKEN` through your local environment or secret manager. The token selects the destination account. Keep it out of files, source control and command history.
 - Inspect the dry-run data before explicitly sending:
 
@@ -67,15 +65,15 @@ python3 src/raindrop.py --config config.local.json
 python3 src/raindrop.py --config config.local.json --send
 ```
 
-The fixed dates always work for local review but eventually become too old for live ingestion. New dates must represent genuinely new usage; do not retimestamp the assessment events for another demonstration.
+The fixed example dates remain usable for dry runs after they become too old for live ingestion. New dates must represent new usage.
 
-## Validation and scope
+## Validation and limits
 
-The original live run returned HTTP 200 for all four batches. It resent 200 earlier Postman events and added 160 new ones. All six checked usage totals matched expectations, and Dunder's draft invoice remained $15.45. The original source and run evidence are preserved separately with the assessment materials.
+The assessment live run on 11 November returned HTTP 200 for all four batches. The repository script reproduces the same 360 events, including IDs, timestamps and properties, and passes 13 local tests. Its delivery behaviour has been tested with simulated API responses, not a live send.
 
-The simplified version passes 13 local tests and reproduces the original 360 event objects and six expected totals. Failure and rerun tests use simulated API responses; they are not additional live evidence. The script intentionally has no delivery ledger, file lock, dataset fingerprints or captured-invoice parser.
+The assessment live run resent 200 earlier Postman events unchanged and added 160 new ones. All six checked usage totals matched expectations, and Dunder Mifflin’s draft invoice remained $15.45.
 
-Final invoice quantities in this dataset are whole hours. The live evidence does not establish fractional final quantities or sub-cent rounding. Billing idle, provisioned time would also need agreement with Raindrop.
+Final invoice quantities are whole hours. Live invoice validation did not cover fractional final quantities or sub-cent rounding. Billing idle, provisioned time would also need agreement with Raindrop.
 
 ## References
 
