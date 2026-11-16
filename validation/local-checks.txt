@@ -1,28 +1,42 @@
-Simplified revision: local checks, 16 November 2026. No account requests.
+Commented simplified revision: local checks, 16 November 2026. No account requests.
 
 $ python3 src/raindrop.py
 DRY RUN: 360 events; 4 batches; no network requests
 
 $ python3 -m unittest discover -s tests -v
-test_batches_and_reruns_preserve_all_ids (test_billing.BillingTests.test_batches_and_reruns_preserve_all_ids) ... ok
-test_default_dry_run_writes_data_without_sending (test_billing.BillingTests.test_default_dry_run_writes_data_without_sending) ... ok
-test_expected_totals_and_fractional_hour_measurements (test_billing.BillingTests.test_expected_totals_and_fractional_hour_measurements) ... ok
-test_http_request_and_uncertain_transport_outcomes (test_billing.BillingTests.test_http_request_and_uncertain_transport_outcomes) ... ok
-test_invalid_configuration_and_billing_boundaries (test_billing.BillingTests.test_invalid_configuration_and_billing_boundaries) ... ok
-test_invalid_tokens_are_blocked_without_being_exposed (test_billing.BillingTests.test_invalid_tokens_are_blocked_without_being_exposed) ... ok
-test_live_send_blocks_old_or_unfinished_windows (test_billing.BillingTests.test_live_send_blocks_old_or_unfinished_windows) ... ok
-test_permanent_errors_stop_without_retry_or_next_batch (test_billing.BillingTests.test_permanent_errors_stop_without_retry_or_next_batch) ... ok
-test_rate_limit_and_server_error_retry_with_backoff (test_billing.BillingTests.test_rate_limit_and_server_error_retry_with_backoff) ... ok
-test_repeatable_360_events_with_correct_customer_provider_and_units (test_billing.BillingTests.test_repeatable_360_events_with_correct_customer_provider_and_units) ... ok
-test_retry_after_seconds_date_and_invalid_header (test_billing.BillingTests.test_retry_after_seconds_date_and_invalid_header) ... ok
-test_retry_exhaustion_stops_after_five_attempts (test_billing.BillingTests.test_retry_exhaustion_stops_after_five_attempts) ... ok
-test_timeout_retries_the_identical_batch (test_billing.BillingTests.test_timeout_retries_the_identical_batch) ... ok
+test_batches_and_reruns_preserve_all_ids (test_billing.BillingTests.test_batches_and_reruns_preserve_all_ids)
+A rerun sends the same four batches again; there is no local skip ledger. ... ok
+test_default_dry_run_writes_data_without_sending (test_billing.BillingTests.test_default_dry_run_writes_data_without_sending)
+Run the default command in a temporary folder and prove the sender is unused. ... ok
+test_expected_totals_and_fractional_hour_measurements (test_billing.BillingTests.test_expected_totals_and_fractional_hour_measurements)
+Compare expected totals with event sums and preserve 20-minute measurements. ... ok
+test_http_request_and_uncertain_transport_outcomes (test_billing.BillingTests.test_http_request_and_uncertain_transport_outcomes)
+Inspect the outgoing JSON and timeout, then simulate network and HTTP errors. ... ok
+test_invalid_configuration_and_billing_boundaries (test_billing.BillingTests.test_invalid_configuration_and_billing_boundaries)
+Reject bad durations, missing metadata, identity collisions and invalid dates. ... ok
+test_invalid_tokens_are_blocked_without_being_exposed (test_billing.BillingTests.test_invalid_tokens_are_blocked_without_being_exposed)
+Reject missing or malformed tokens without including the secret in the error. ... ok
+test_live_send_blocks_old_or_unfinished_windows (test_billing.BillingTests.test_live_send_blocks_old_or_unfinished_windows)
+Block invalid live dates before the first API request is attempted. ... ok
+test_permanent_errors_stop_without_retry_or_next_batch (test_billing.BillingTests.test_permanent_errors_stop_without_retry_or_next_batch)
+Bad requests, access errors and redirects must stop further delivery. ... ok
+test_rate_limit_and_server_error_retry_with_backoff (test_billing.BillingTests.test_rate_limit_and_server_error_retry_with_backoff)
+Simulate throttling and a server outage before the same batch succeeds. ... ok
+test_repeatable_360_events_with_correct_customer_provider_and_units (test_billing.BillingTests.test_repeatable_360_events_with_correct_customer_provider_and_units)
+Check repeatability, unique IDs, customer/provider counts and property types. ... ok
+test_retry_after_seconds_date_and_invalid_header (test_billing.BillingTests.test_retry_after_seconds_date_and_invalid_header)
+Respect either server delay format and fall back when the header is invalid. ... ok
+test_retry_exhaustion_stops_after_five_attempts (test_billing.BillingTests.test_retry_exhaustion_stops_after_five_attempts)
+A continuing failure gets five requests and four waits, then stops. ... ok
+test_timeout_retries_the_identical_batch (test_billing.BillingTests.test_timeout_retries_the_identical_batch)
+Simulate a lost response, then success, and compare the two requests. ... ok
 
 ----------------------------------------------------------------------
-Ran 13 tests in 2.562s
+Ran 13 tests in 2.730s
 
 OK
 
-Original implementation comparison: all 360 event objects are identical, including order, IDs, timestamps and properties.
-All six expected usage totals and charges match the original source measurements.
-This revision was not sent live. The invoice evidence belongs to the preserved original implementation.
+All 360 event objects and six expected totals are unchanged.
+Executable code structure matches the pre-comment version.
+The original live implementation and evidence are preserved separately.
+This revision has not been sent to Metronome.
